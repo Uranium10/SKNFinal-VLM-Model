@@ -96,5 +96,8 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
-if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+# Keep the registration at module scope. RunPod's GitHub importer performs a
+# lightweight repository scan and may not recognize registrations hidden
+# behind a ``__main__`` guard, even though the Docker entry point would execute
+# that guard correctly.
+runpod.serverless.start({"handler": handler})
