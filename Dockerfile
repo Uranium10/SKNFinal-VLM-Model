@@ -1,4 +1,7 @@
-FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
+# Keep the CUDA/PyTorch versions used by the worker while avoiding the much
+# larger RunPod development image. A smaller runtime image reduces Serverless
+# image-pull time and therefore cold-start latency.
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
