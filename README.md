@@ -93,3 +93,12 @@ pytest tests -q
 
 `test_input.json` uses the health-check request so container/build checks do
 not spend GPU time or require a quotation fixture.
+# Timed administrator warmup
+
+`{"input":{"warmup":true}}` explicitly loads the base model and LoRA without
+sending a quotation or generating an extraction. It returns `model_loaded` and
+`model_load_seconds`. This is a paid GPU operation, unlike the lightweight
+`healthcheck` path which intentionally does not load the model. The backend
+administrator lease controls Active workers and expiry; the worker does not
+change its own RunPod account settings. Deploy this version before enabling
+`RUNPOD_ADMIN_WARMUP_ENABLED` on the backend.

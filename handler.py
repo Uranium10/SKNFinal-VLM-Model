@@ -45,6 +45,16 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             "prompt_source": "request",
         }
 
+    # Explicit paid preparation requested by the administrator's timed lease.
+    # Do not alter the cheap build healthcheck or require a real quotation.
+    if payload.get("warmup") is True:
+        RUNTIME.load()
+        return {
+            "status": "ok", "worker": "biddingflow-quotation-extractor",
+            "model_loaded": RUNTIME.loaded,
+            "model_load_seconds": RUNTIME.load_seconds,
+        }
+
     request_id = str(payload.get("request_id") or event.get("id") or "").strip()
     if not request_id:
         raise ValueError("request_id is required")
