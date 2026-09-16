@@ -157,12 +157,18 @@ class QuotationModelRuntime:
     def extract(
         self,
         images: list[Image.Image],
+        document_text: str,
         system_prompt: str,
         user_prompt: str,
         max_new_tokens: int,
     ) -> tuple[dict[str, Any], str, float]:
         self.load()
         user_text = user_prompt.replace("<image>\n", "", 1)
+        if document_text:
+            user_text += (
+                "\n\n[Python 라이브러리로 추출한 견적 원문 및 표]\n"
+                + document_text
+            )
         messages = [
             {"role": "system", "content": system_prompt},
             {
@@ -180,7 +186,13 @@ class QuotationModelRuntime:
                 add_generation_prompt=True,
                 enable_thinking=False,
             )
-            inputs = self._processor(text=[prompt], images=images, return_tensors="pt")
+            processor_kwargs: dict[str, Any] = {
+                "text": [prompt],
+                "return_tensors": "pt",
+            }
+            if images:
+                processor_kwargs["images"] = images
+            inputs = self._processor(**processor_kwargs)
             inputs = {
                 key: value.to(self._device) if hasattr(value, "to") else value
                 for key, value in inputs.items()

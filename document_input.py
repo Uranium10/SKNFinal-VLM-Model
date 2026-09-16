@@ -51,7 +51,7 @@ def _validate_url(url: str) -> None:
 
 def _download(url: str, filename: str | None) -> DocumentBytes:
     _validate_url(url)
-    max_bytes = _positive_int_env("MAX_DOCUMENT_BYTES", 25 * 1024 * 1024)
+    max_bytes = _positive_int_env("MAX_DOCUMENT_BYTES", 6 * 1024 * 1024)
     with requests.get(
         url,
         stream=True,
@@ -88,7 +88,7 @@ def _decode_base64(value: str, filename: str | None) -> DocumentBytes:
     except (binascii.Error, ValueError) as exc:
         raise ValueError("document_base64 is not valid base64") from exc
 
-    max_bytes = _positive_int_env("MAX_DOCUMENT_BYTES", 25 * 1024 * 1024)
+    max_bytes = _positive_int_env("MAX_DOCUMENT_BYTES", 6 * 1024 * 1024)
     if len(data) > max_bytes:
         raise ValueError("document exceeds MAX_DOCUMENT_BYTES")
     return DocumentBytes(data, filename or "quotation.png")
@@ -103,18 +103,30 @@ def _one_document(spec: dict[str, Any]) -> DocumentBytes:
     return _download(url, filename) if url else _decode_base64(encoded, filename)
 
 
+def read_document_text(payload: dict[str, Any]) -> str:
+    """Read normalized text produced by the backend's safe document parsers."""
+
+    value = str(payload.get("document_text") or "").strip()
+    max_chars = _positive_int_env("MAX_DOCUMENT_TEXT_CHARS", 60_000)
+    if len(value) > max_chars:
+        raise ValueError("document_text exceeds MAX_DOCUMENT_TEXT_CHARS")
+    return value
+
+
 def read_documents(payload: dict[str, Any]) -> list[DocumentBytes]:
-    """Accept a document list and a small set of legacy single-document keys."""
+    """Accept optional documents and a small set of legacy single-document keys."""
 
     specs = payload.get("documents")
     if specs is None:
-        specs = [{
-            "url": payload.get("document_url") or payload.get("image_url"),
-            "base64": payload.get("document_base64") or payload.get("image_base64"),
+        legacy_url = payload.get("document_url") or payload.get("image_url")
+        legacy_base64 = payload.get("document_base64") or payload.get("image_base64")
+        specs = ([{
+            "url": legacy_url,
+            "base64": legacy_base64,
             "filename": payload.get("filename"),
-        }]
-    if not isinstance(specs, list) or not specs:
-        raise ValueError("documents must be a non-empty list")
+        }] if legacy_url or legacy_base64 else [])
+    if not isinstance(specs, list):
+        raise ValueError("documents must be a list")
     if len(specs) > _positive_int_env("MAX_DOCUMENTS", 8):
         raise ValueError("too many documents")
     if not all(isinstance(spec, dict) for spec in specs):
@@ -156,6 +168,4 @@ def documents_to_images(documents: list[DocumentBytes]) -> list[Image.Image]:
         except Exception as exc:
             raise ValueError(f"unsupported image document: {document.filename}") from exc
 
-    if not images:
-        raise ValueError("no image pages were decoded")
     return images

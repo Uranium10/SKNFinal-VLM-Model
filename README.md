@@ -1,15 +1,17 @@
 # BiddingFlow quotation extraction worker
 
-This repository is an isolated RunPod Serverless queue worker. It performs only
-multimodal inference and never connects directly to ERPNext or PostgreSQL.
+This repository is an isolated RunPod Serverless queue worker. It performs
+text, vision, or hybrid inference and never connects directly to ERPNext or
+PostgreSQL. The backend extracts DOCX/Excel/CSV/TXT/EML content with Python
+libraries and sends the normalized text; image/PDF bytes are handled here.
 
 ## Request contract
 
 The BiddingFlow backend owns the prompt registry. It sends a versioned prompt
-and its SHA-256 hash with one or more short-lived document URLs. No production
-prompt is stored in this repository. Base64 input is supported for small
-console tests, but URLs are preferred because RunPod `/run` requests have a
-payload limit.
+and its SHA-256 hash with normalized document text and/or image/PDF inputs. No
+production prompt is stored in this repository. The current backend uses
+Base64 for image/PDF inputs; short-lived allowlisted URLs remain supported for
+larger deployments.
 
 ```json
 {
@@ -21,6 +23,8 @@ payload limit.
         "filename": "quotation.pdf"
       }
     ],
+    "document_text": "[표 1]\n품목명 | 수량 | 단가\n...",
+    "input_mode": "hybrid",
     "system_prompt": "...",
     "user_prompt": "...",
     "prompt_version": "quotation_json_v1",
@@ -42,7 +46,7 @@ may contain quotation data.
 ## RunPod GitHub deployment
 
 1. RunPod **Settings > Connections > GitHub > Connect** and grant access only
-   to the backend repository.
+   to this worker repository.
 2. Choose **Serverless > New Endpoint > Import Git Repository**.
 3. Select branch `main` and the root `Dockerfile`.
 4. Select a queue endpoint and initially configure:
@@ -71,8 +75,9 @@ The Docker build context and Dockerfile are both at the repository root.
 | `MAX_NEW_TOKENS_CAP` | `1024` | Per-request hard limit |
 | `ALLOWED_DOCUMENT_HOSTS` | empty | Comma-separated download host allowlist |
 | `ALLOW_HTTP_DOCUMENT_URLS` | `false` | Allow plain HTTP only for controlled tests |
-| `MAX_DOCUMENT_BYTES` | `26214400` | Download/base64 size limit |
+| `MAX_DOCUMENT_BYTES` | `6291456` | Per-document download/base64 size limit |
 | `MAX_PDF_PAGES` | `8` | PDF page limit |
+| `MAX_DOCUMENT_TEXT_CHARS` | `60000` | Normalized document-text limit |
 | `INCLUDE_RAW_MODEL_OUTPUT` | `false` | Include raw generated text in response |
 
 The Hugging Face repositories are currently public. If that changes, add

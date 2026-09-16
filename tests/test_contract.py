@@ -13,7 +13,11 @@ import pytest
 WORKER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKER_ROOT))
 
-from document_input import documents_to_images, read_documents  # noqa: E402
+from document_input import (  # noqa: E402
+    documents_to_images,
+    read_document_text,
+    read_documents,
+)
 from model_runtime import extract_json_object  # noqa: E402
 from prompt_contract import prompt_values  # noqa: E402
 from schemas import validate_extraction  # noqa: E402
@@ -103,3 +107,18 @@ def test_base64_image_input_round_trip() -> None:
     finally:
         for decoded in images:
             decoded.close()
+
+
+def test_text_only_input_does_not_require_documents() -> None:
+    payload = {"document_text": "품목명 | 수량\n테스트 품목 | 1", "documents": []}
+
+    assert read_documents(payload) == []
+    assert documents_to_images([]) == []
+    assert read_document_text(payload).startswith("품목명")
+
+
+def test_document_text_limit(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_DOCUMENT_TEXT_CHARS", "5")
+
+    with pytest.raises(ValueError, match="MAX_DOCUMENT_TEXT_CHARS"):
+        read_document_text({"document_text": "123456"})

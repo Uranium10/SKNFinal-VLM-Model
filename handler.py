@@ -9,7 +9,7 @@ from typing import Any
 
 import runpod
 
-from document_input import documents_to_images, read_documents
+from document_input import documents_to_images, read_document_text, read_documents
 from model_runtime import QuotationModelRuntime
 from prompt_contract import prompt_values
 from schemas import validate_extraction
@@ -50,12 +50,16 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("request_id is required")
 
     system_prompt, user_prompt, prompt_version, prompt_hash = prompt_values(payload)
+    document_text = read_document_text(payload)
     documents = read_documents(payload)
+    if not documents and not document_text:
+        raise ValueError("at least one document or document_text is required")
     images = documents_to_images(documents)
     started = time.perf_counter()
     try:
         extracted, raw_text, generation_seconds = RUNTIME.extract(
             images,
+            document_text,
             system_prompt,
             user_prompt,
             _max_new_tokens(payload),
@@ -86,6 +90,11 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         "extraction": validated,
         "metrics": {
             "pages": len(images),
+            "input_mode": (
+                "hybrid" if images and document_text
+                else "vision" if images
+                else "text"
+            ),
             "model_load_seconds": RUNTIME.load_seconds,
             "generation_seconds": generation_seconds,
             "elapsed_seconds": elapsed_seconds,
