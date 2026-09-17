@@ -113,6 +113,21 @@ def read_document_text(payload: dict[str, Any]) -> str:
     return value
 
 
+def merge_document_text(library_text: str, ocr_text: str) -> str:
+    """Combine deterministic extraction and LoRA OCR into one bounded source."""
+
+    parts = []
+    if library_text.strip():
+        parts.append("[Python 라이브러리 추출 원문]\n" + library_text.strip())
+    if ocr_text.strip():
+        parts.append("[LoRA OCR 원문]\n" + ocr_text.strip())
+    merged = "\n\n".join(parts)
+    max_chars = _positive_int_env("MAX_DOCUMENT_TEXT_CHARS", 60_000)
+    if len(merged) > max_chars:
+        raise ValueError("combined document_text exceeds MAX_DOCUMENT_TEXT_CHARS")
+    return merged
+
+
 def read_documents(payload: dict[str, Any]) -> list[DocumentBytes]:
     """Accept optional documents and a small set of legacy single-document keys."""
 

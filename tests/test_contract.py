@@ -16,15 +16,18 @@ sys.path.insert(0, str(WORKER_ROOT))
 from document_input import (  # noqa: E402
     _detail_views,
     documents_to_images,
+    merge_document_text,
     read_document_text,
     read_documents,
 )
 from model_runtime import (  # noqa: E402
+    OCR_SYSTEM_PROMPT,
+    OCR_USER_PROMPT,
     _local_adapter_source,
     extract_json_object,
-    needs_visual_recovery,
 )
 from prompt_contract import prompt_values  # noqa: E402
+from quotation_pipeline import run_quotation_pipeline  # noqa: E402
 from schemas import validate_extraction  # noqa: E402
 
 
@@ -74,24 +77,72 @@ def test_schema_rejects_missing_items() -> None:
         validate_extraction(payload)
 
 
-def test_visual_recovery_runs_when_any_target_field_is_missing() -> None:
-    payload = _valid_payload()
-
-    assert needs_visual_recovery(payload) is True
-
-    payload["valid_until"] = "2026-09-30"
-    payload["notes"] = "특약사항 원문"
-    payload["items"][0]["expected_delivery_date"] = "2026-09-30"
-    assert needs_visual_recovery(payload) is False
+def test_ocr_prompt_preserves_handwriting_tables_and_conflicts() -> None:
+    assert "손글씨" in OCR_SYSTEM_PROMPT
+    assert "Markdown 표" in OCR_USER_PROMPT
+    assert "둘 다 보존" in OCR_USER_PROMPT
 
 
-def test_visual_recovery_does_not_require_items_to_have_delivery_when_empty() -> None:
-    payload = _valid_payload()
-    payload["valid_until"] = "2026-09-30"
-    payload["notes"] = "특약사항 원문"
-    payload["items"] = []
+def test_library_and_ocr_text_are_kept_as_separate_evidence() -> None:
+    merged = merge_document_text("이메일 본문", "유효기간: 2026-09-30")
 
-    assert needs_visual_recovery(payload) is False
+    assert "[Python 라이브러리 추출 원문]\n이메일 본문" in merged
+    assert "[LoRA OCR 원문]\n유효기간: 2026-09-30" in merged
+
+
+def test_merge_document_text_does_not_fuzzy_deduplicate_conflicts() -> None:
+    merged = merge_document_text(
+        "유효기간: 2026-09-30",
+        "유효기간: 2026-09-20",
+    )
+
+    assert "2026-09-30" in merged
+    assert "2026-09-20" in merged
+
+
+def test_visual_pipeline_runs_lora_ocr_before_base_structuring() -> None:
+    calls = []
+
+    class Runtime:
+        def transcribe_document(self, images, max_new_tokens):
+            calls.append(("ocr", len(images), max_new_tokens))
+            return "유효기간: 2026-09-30", 1.25
+
+        def structure_text(self, text, system_prompt, user_prompt, max_new_tokens):
+            calls.append(("structure", text, max_new_tokens))
+            return _valid_payload(), '{"quotation_id": null}', 0.75
+
+    result = run_quotation_pipeline(
+        Runtime(),
+        [Image.new("RGB", (10, 20), "white")],
+        "",
+        "system",
+        "user",
+        512,
+        2048,
+    )
+
+    assert calls[0] == ("ocr", 1, 2048)
+    assert calls[1][0] == "structure"
+    assert "[LoRA OCR 원문]" in calls[1][1]
+    assert result.ocr_generation_seconds == 1.25
+    assert result.structure_generation_seconds == 0.75
+
+
+def test_library_text_pipeline_skips_visual_ocr() -> None:
+    class Runtime:
+        def transcribe_document(self, *_args):
+            raise AssertionError("text documents must not use visual OCR")
+
+        def structure_text(self, text, *_args):
+            assert "[Python 라이브러리 추출 원문]" in text
+            return _valid_payload(), "{}", 0.5
+
+    result = run_quotation_pipeline(
+        Runtime(), [], "품목명: 안전모", "system", "user", 512, 2048,
+    )
+
+    assert result.ocr_generation_seconds == 0.0
 
 
 def test_json_parser_tolerates_markdown_fence() -> None:

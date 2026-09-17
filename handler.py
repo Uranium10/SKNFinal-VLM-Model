@@ -9,10 +9,14 @@ from typing import Any
 
 import runpod
 
-from document_input import documents_to_images, read_document_text, read_documents
-from model_runtime import QuotationModelRuntime, needs_visual_recovery
+from document_input import (
+    documents_to_images,
+    read_document_text,
+    read_documents,
+)
+from model_runtime import QuotationModelRuntime
 from prompt_contract import prompt_values
-from schemas import validate_extraction
+from quotation_pipeline import run_quotation_pipeline
 
 
 logging.basicConfig(
@@ -21,7 +25,7 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger("biddingflow.quotation_worker")
 RUNTIME = QuotationModelRuntime()
-WORKER_VERSION = "visual-recovery-v1"
+WORKER_VERSION = "document-text-v1"
 
 
 def _max_new_tokens(payload: dict[str, Any]) -> int:
@@ -33,11 +37,11 @@ def _max_new_tokens(payload: dict[str, Any]) -> int:
     return requested
 
 
-def _recovery_max_new_tokens() -> int:
-    value = int(os.getenv("RECOVERY_MAX_NEW_TOKENS", "512"))
-    cap = int(os.getenv("MAX_NEW_TOKENS_CAP", "1024"))
+def _ocr_max_new_tokens() -> int:
+    value = int(os.getenv("OCR_MAX_NEW_TOKENS", "2048"))
+    cap = int(os.getenv("OCR_MAX_NEW_TOKENS_CAP", "4096"))
     if value <= 0 or value > cap:
-        raise ValueError(f"RECOVERY_MAX_NEW_TOKENS must be between 1 and {cap}")
+        raise ValueError(f"OCR_MAX_NEW_TOKENS must be between 1 and {cap}")
     return value
 
 
@@ -80,34 +84,26 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("at least one document or document_text is required")
     images = documents_to_images(documents)
     started = time.perf_counter()
-    recovery_text = ""
-    recovery_attempted = False
-    recovery_generation_seconds = 0.0
     try:
-        extracted, raw_text, generation_seconds = RUNTIME.extract(
+        result = run_quotation_pipeline(
+            RUNTIME,
             images,
             document_text,
             system_prompt,
             user_prompt,
             _max_new_tokens(payload),
+            _ocr_max_new_tokens(),
         )
-        validated = validate_extraction(extracted)
-        if images and needs_visual_recovery(validated):
-            recovery_attempted = True
-            recovery_text, recovery_generation_seconds = RUNTIME.transcribe_recovery(
-                images,
-                _recovery_max_new_tokens(),
-            )
     finally:
         for image in images:
             image.close()
 
     elapsed_seconds = time.perf_counter() - started
     LOGGER.info(
-        "quotation extracted request_id=%s image_views=%d recovery=%s elapsed=%.3fs",
+        "quotation extracted request_id=%s image_views=%d ocr=%s elapsed=%.3fs",
         request_id,
         len(images),
-        recovery_attempted,
+        bool(images),
         elapsed_seconds,
     )
     response: dict[str, Any] = {
@@ -122,27 +118,29 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             "adapter": RUNTIME.adapter_model_id,
             "adapter_revision": RUNTIME.adapter_revision,
         },
-        "extraction": validated,
+        "extraction": result.extraction,
+        "document_text": result.document_text,
         "metrics": {
             # Kept for compatibility with existing job-result consumers.
             "pages": len(images),
             "image_views": len(images),
             "input_mode": (
-                "hybrid" if images and document_text
-                else "vision" if images
+                "ocr_text" if images and document_text
+                else "ocr" if images
                 else "text"
             ),
             "model_load_seconds": RUNTIME.load_seconds,
-            "generation_seconds": generation_seconds,
-            "recovery_attempted": recovery_attempted,
-            "recovery_generation_seconds": recovery_generation_seconds,
+            "ocr_attempted": bool(images),
+            "ocr_generation_seconds": result.ocr_generation_seconds,
+            "structure_generation_seconds": result.structure_generation_seconds,
+            "generation_seconds": (
+                result.ocr_generation_seconds + result.structure_generation_seconds
+            ),
             "elapsed_seconds": elapsed_seconds,
         },
     }
-    if recovery_text:
-        response["recovery_text"] = recovery_text
     if os.getenv("INCLUDE_RAW_MODEL_OUTPUT", "false").lower() == "true":
-        response["raw_model_output"] = raw_text
+        response["raw_model_output"] = result.raw_model_output
     return response
 
 
