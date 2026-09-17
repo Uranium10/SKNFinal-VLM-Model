@@ -74,6 +74,7 @@ The Docker build context and Dockerfile are both at the repository root.
 | `VISION_MAX_PIXELS` | `802816` | Evaluation-compatible maximum pixels |
 | `MAX_NEW_TOKENS` | `512` | Default output token limit |
 | `MAX_NEW_TOKENS_CAP` | `1024` | Per-request hard limit |
+| `RECOVERY_MAX_NEW_TOKENS` | `512` | Conditional visual transcription token limit |
 | `ALLOWED_DOCUMENT_HOSTS` | empty | Comma-separated download host allowlist |
 | `ALLOW_HTTP_DOCUMENT_URLS` | `false` | Allow plain HTTP only for controlled tests |
 | `MAX_DOCUMENT_BYTES` | `6291456` | Per-document download/base64 size limit |

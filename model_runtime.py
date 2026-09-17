@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,31 @@ DEFAULT_BASE_MODEL = "Qwen/Qwen3.5-9B"
 DEFAULT_ADAPTER_MODEL = "lyc9872/qwen_3.5_9b_peft"
 DEFAULT_ADAPTER_REVISION = "96ebf2f31aef9ad9c0b66f597e5eca4eccbc5885"
 HF_CACHE_ROOT = Path(os.getenv("HF_CACHE_ROOT", "/runpod-volume/huggingface-cache/hub"))
+
+RECOVERY_SYSTEM_PROMPT = (
+    "당신은 견적서 이미지의 글자를 있는 그대로 옮기는 전사기입니다. "
+    "이미지에 없는 내용을 추측하거나 계산하지 마세요."
+)
+RECOVERY_USER_PROMPT = """이미지에서 아래 라벨과 그 뒤의 내용을 원문 그대로 전사하세요.
+- 유효기간, 견적 유효기간, Valid Till, Validity
+- 납기일, 납품일, 납품예정일, 예상 납품일, 출고예정일
+- 특약사항, 특이사항, 비고, 조건
+- 납품 장소, 사양 특기, 발주 조건
+
+보이는 라벨과 값만 출력하고 읽히지 않는 값은 만들지 마세요.
+JSON, 설명, 요약 없이 `라벨: 원문` 형식의 줄만 출력하세요.
+특약사항 아래의 글머리표 문장은 각 줄을 빠짐없이 `특약사항: 원문` 형식으로 출력하세요."""
+
+
+def needs_visual_recovery(extraction: dict[str, Any]) -> bool:
+    """Return whether visual text recovery could fill an omitted ERP field."""
+
+    if not extraction.get("valid_until") or not str(extraction.get("notes") or "").strip():
+        return True
+    return any(
+        isinstance(item, dict) and not item.get("expected_delivery_date")
+        for item in extraction.get("items") or []
+    )
 
 
 def _cached_snapshot(model_id: str, revision: str | None = None) -> str | None:
@@ -243,6 +269,70 @@ class QuotationModelRuntime:
                 clean_up_tokenization_spaces=False,
             )[0].strip()
         return extract_json_object(raw_text), raw_text, generation_seconds
+
+    def transcribe_recovery(
+        self,
+        images: list[Image.Image],
+        max_new_tokens: int,
+    ) -> tuple[str, float]:
+        """Transcribe only labels used by deterministic backend fallbacks.
+
+        This pass runs only after the structured result omitted an ERP field.
+        The LoRA is disabled when supported so its learned JSON response style
+        cannot turn a verbatim transcription request into another quotation
+        object.
+        """
+
+        self.load()
+        messages = [
+            {"role": "system", "content": RECOVERY_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    *({"type": "image", "image": image} for image in images),
+                    {"type": "text", "text": RECOVERY_USER_PROMPT},
+                ],
+            },
+        ]
+        with self._generation_lock, self._torch.inference_mode():
+            prompt = self._processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            inputs = self._processor(
+                text=[prompt],
+                images=images,
+                return_tensors="pt",
+            )
+            inputs = {
+                key: value.to(self._device) if hasattr(value, "to") else value
+                for key, value in inputs.items()
+            }
+            input_length = inputs["input_ids"].shape[-1]
+            disable_adapter = getattr(self._model, "disable_adapter", None)
+            adapter_context = (
+                disable_adapter() if callable(disable_adapter) else nullcontext()
+            )
+            self._torch.cuda.synchronize()
+            started = time.perf_counter()
+            with adapter_context:
+                outputs = self._model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    use_cache=True,
+                )
+            self._torch.cuda.synchronize()
+            generation_seconds = time.perf_counter() - started
+            generated = outputs[:, input_length:]
+            text = self._processor.batch_decode(
+                generated,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0].strip()
+        return text, generation_seconds
 
 
     def model_revision(self) -> str | None:

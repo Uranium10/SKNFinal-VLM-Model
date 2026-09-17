@@ -19,7 +19,11 @@ from document_input import (  # noqa: E402
     read_document_text,
     read_documents,
 )
-from model_runtime import _local_adapter_source, extract_json_object  # noqa: E402
+from model_runtime import (  # noqa: E402
+    _local_adapter_source,
+    extract_json_object,
+    needs_visual_recovery,
+)
 from prompt_contract import prompt_values  # noqa: E402
 from schemas import validate_extraction  # noqa: E402
 
@@ -68,6 +72,26 @@ def test_schema_rejects_missing_items() -> None:
     del payload["items"]
     with pytest.raises(Exception):
         validate_extraction(payload)
+
+
+def test_visual_recovery_runs_when_any_target_field_is_missing() -> None:
+    payload = _valid_payload()
+
+    assert needs_visual_recovery(payload) is True
+
+    payload["valid_until"] = "2026-09-30"
+    payload["notes"] = "특약사항 원문"
+    payload["items"][0]["expected_delivery_date"] = "2026-09-30"
+    assert needs_visual_recovery(payload) is False
+
+
+def test_visual_recovery_does_not_require_items_to_have_delivery_when_empty() -> None:
+    payload = _valid_payload()
+    payload["valid_until"] = "2026-09-30"
+    payload["notes"] = "특약사항 원문"
+    payload["items"] = []
+
+    assert needs_visual_recovery(payload) is False
 
 
 def test_json_parser_tolerates_markdown_fence() -> None:
