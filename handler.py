@@ -81,7 +81,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
 
     elapsed_seconds = time.perf_counter() - started
     LOGGER.info(
-        "quotation extracted request_id=%s pages=%d elapsed=%.3fs",
+        "quotation extracted request_id=%s image_views=%d elapsed=%.3fs",
         request_id,
         len(images),
         elapsed_seconds,
@@ -99,7 +99,9 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         },
         "extraction": validated,
         "metrics": {
+            # Kept for compatibility with existing job-result consumers.
             "pages": len(images),
+            "image_views": len(images),
             "input_mode": (
                 "hybrid" if images and document_text
                 else "vision" if images

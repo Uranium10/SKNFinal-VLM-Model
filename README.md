@@ -78,6 +78,7 @@ The Docker build context and Dockerfile are both at the repository root.
 | `ALLOW_HTTP_DOCUMENT_URLS` | `false` | Allow plain HTTP only for controlled tests |
 | `MAX_DOCUMENT_BYTES` | `6291456` | Per-document download/base64 size limit |
 | `MAX_PDF_PAGES` | `8` | PDF page limit |
+| `MAX_DETAIL_CROP_PAGES` | `2` | Number of tall pages that also receive top/bottom detail views |
 | `MAX_DOCUMENT_TEXT_CHARS` | `60000` | Normalized document-text limit |
 | `INCLUDE_RAW_MODEL_OUTPUT` | `false` | Include raw generated text in response |
 

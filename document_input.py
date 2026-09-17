@@ -138,11 +138,49 @@ def _is_pdf(document: DocumentBytes) -> bool:
     return document.data.startswith(b"%PDF-") or Path(document.filename).suffix.lower() == ".pdf"
 
 
+def _detail_views(image: Image.Image) -> list[Image.Image]:
+    """Return top/bottom detail views for tall quotation pages.
+
+    A full A4 page is resized to the processor's per-image pixel budget. Small
+    validity and terms text is therefore easy for a VLM to miss even though
+    item rows remain readable. Supplying two overlapping crops preserves the
+    full-page context while giving those regions enough effective resolution.
+    """
+
+    width, height = image.size
+    if height < int(width * 1.15) or min(width, height) < 600:
+        return []
+
+    overlap = 0.08
+    split = 0.58
+    top_end = max(1, min(height, round(height * split)))
+    bottom_start = max(0, min(height - 1, round(height * (split - overlap))))
+    return [
+        image.crop((0, 0, width, top_end)),
+        image.crop((0, bottom_start, width, height)),
+    ]
+
+
+def _append_page_with_details(
+    images: list[Image.Image],
+    page_image: Image.Image,
+    *,
+    include_details: bool = True,
+) -> None:
+    """Append a detached overview followed by optional detached detail crops."""
+
+    overview = page_image.convert("RGB").copy()
+    images.append(overview)
+    if include_details:
+        images.extend(_detail_views(overview))
+
+
 def documents_to_images(documents: list[DocumentBytes]) -> list[Image.Image]:
     """Convert supported documents into detached RGB PIL images."""
 
     images: list[Image.Image] = []
     max_pages = _positive_int_env("MAX_PDF_PAGES", 8)
+    detail_pages_remaining = _positive_int_env("MAX_DETAIL_CROP_PAGES", 2)
     for document in documents:
         if _is_pdf(document):
             try:
@@ -157,14 +195,24 @@ def documents_to_images(documents: list[DocumentBytes]) -> list[Image.Image]:
                 for page in pdf:
                     pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                     with Image.open(io.BytesIO(pixmap.tobytes("png"))) as page_image:
-                        images.append(page_image.convert("RGB").copy())
+                        _append_page_with_details(
+                            images,
+                            page_image,
+                            include_details=detail_pages_remaining > 0,
+                        )
+                        detail_pages_remaining -= 1
             finally:
                 pdf.close()
             continue
 
         try:
             with Image.open(io.BytesIO(document.data)) as source_image:
-                images.append(source_image.convert("RGB").copy())
+                _append_page_with_details(
+                    images,
+                    source_image,
+                    include_details=detail_pages_remaining > 0,
+                )
+                detail_pages_remaining -= 1
         except Exception as exc:
             raise ValueError(f"unsupported image document: {document.filename}") from exc
 

@@ -14,6 +14,7 @@ WORKER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKER_ROOT))
 
 from document_input import (  # noqa: E402
+    _detail_views,
     documents_to_images,
     read_document_text,
     read_documents,
@@ -131,6 +132,22 @@ def test_text_only_input_does_not_require_documents() -> None:
     assert read_documents(payload) == []
     assert documents_to_images([]) == []
     assert read_document_text(payload).startswith("품목명")
+
+
+def test_tall_quotation_image_gets_top_and_bottom_detail_views() -> None:
+    image = Image.new("RGB", (1000, 1600), "white")
+
+    views = _detail_views(image)
+
+    assert len(views) == 2
+    assert views[0].size == (1000, 928)
+    assert views[1].size == (1000, 800)
+
+
+def test_landscape_image_does_not_create_redundant_detail_views() -> None:
+    image = Image.new("RGB", (1600, 1000), "white")
+
+    assert _detail_views(image) == []
 
 
 def test_document_text_limit(monkeypatch) -> None:
