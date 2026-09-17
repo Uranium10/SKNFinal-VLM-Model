@@ -18,7 +18,7 @@ from document_input import (  # noqa: E402
     read_document_text,
     read_documents,
 )
-from model_runtime import extract_json_object  # noqa: E402
+from model_runtime import _local_adapter_source, extract_json_object  # noqa: E402
 from prompt_contract import prompt_values  # noqa: E402
 from schemas import validate_extraction  # noqa: E402
 
@@ -71,6 +71,22 @@ def test_schema_rejects_missing_items() -> None:
 
 def test_json_parser_tolerates_markdown_fence() -> None:
     assert extract_json_object('```json\n{"total": 10}\n```') == {"total": 10}
+
+
+def test_adapter_uses_explicit_local_directory(tmp_path) -> None:
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+
+    assert _local_adapter_source("owner/adapter", "revision", str(adapter)) == str(adapter)
+
+
+def test_missing_explicit_adapter_never_falls_back_to_hub(tmp_path) -> None:
+    with pytest.raises(RuntimeError, match="does not exist"):
+        _local_adapter_source(
+            "owner/adapter",
+            "revision",
+            str(tmp_path / "missing-adapter"),
+        )
 
 
 def test_prompt_contract_requires_matching_hash() -> None:

@@ -69,6 +69,7 @@ The Docker build context and Dockerfile are both at the repository root.
 | `BASE_MODEL_REVISION` | empty | Optional pinned base revision |
 | `ADAPTER_MODEL_ID` | `lyc9872/qwen_3.5_9b_peft` | LoRA adapter |
 | `ADAPTER_MODEL_REVISION` | pinned evaluated revision | Adapter revision |
+| `ADAPTER_LOCAL_PATH` | `/opt/models/quotation-lora` in the image | Offline LoRA path used at runtime |
 | `VISION_MIN_PIXELS` | `200704` | Evaluation-compatible minimum pixels |
 | `VISION_MAX_PIXELS` | `802816` | Evaluation-compatible maximum pixels |
 | `MAX_NEW_TOKENS` | `512` | Default output token limit |
@@ -80,8 +81,9 @@ The Docker build context and Dockerfile are both at the repository root.
 | `MAX_DOCUMENT_TEXT_CHARS` | `60000` | Normalized document-text limit |
 | `INCLUDE_RAW_MODEL_OUTPUT` | `false` | Include raw generated text in response |
 
-The Hugging Face repositories are currently public. If that changes, add
-`HF_TOKEN` through RunPod Secrets rather than committing it.
+The Docker build pins and embeds the quotation LoRA. Runtime workers load it
+with `local_files_only=True`, so cold starts do not contact Hugging Face. The
+base model remains supplied through RunPod's cached-model mount.
 
 ## Contract tests
 

@@ -46,6 +46,27 @@ def _cached_snapshot(model_id: str, revision: str | None = None) -> str | None:
     return None
 
 
+def _local_adapter_source(
+    model_id: str,
+    revision: str | None,
+    local_path: str | None,
+) -> str:
+    """Resolve an adapter without ever falling back to the Hugging Face API."""
+
+    if local_path:
+        candidate = Path(local_path)
+        if candidate.is_dir():
+            return str(candidate)
+        raise RuntimeError(f"quotation LoRA directory does not exist: {candidate}")
+    cached = _cached_snapshot(model_id, revision)
+    if cached:
+        return cached
+    raise RuntimeError(
+        "quotation LoRA is not available locally; bake it into the worker "
+        "image or mount it in the Hugging Face cache"
+    )
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     """Parse one JSON object while tolerating an accidental Markdown fence."""
 
@@ -75,6 +96,7 @@ class QuotationModelRuntime:
         self.base_model_id = os.getenv("BASE_MODEL_ID", DEFAULT_BASE_MODEL).strip()
         self.base_model_revision = os.getenv("BASE_MODEL_REVISION", "").strip() or None
         self.adapter_model_id = os.getenv("ADAPTER_MODEL_ID", DEFAULT_ADAPTER_MODEL).strip()
+        self.adapter_local_path = os.getenv("ADAPTER_LOCAL_PATH", "").strip()
         self.adapter_revision = (
             os.getenv("ADAPTER_MODEL_REVISION", DEFAULT_ADAPTER_REVISION).strip() or None
         )
@@ -141,12 +163,18 @@ class QuotationModelRuntime:
                 ),
                 **common,
             )
-            adapter_kwargs: dict[str, Any] = {"is_trainable": False}
-            if self.adapter_revision:
-                adapter_kwargs["revision"] = self.adapter_revision
+            adapter_source = _local_adapter_source(
+                self.adapter_model_id,
+                self.adapter_revision,
+                self.adapter_local_path,
+            )
+            adapter_kwargs: dict[str, Any] = {
+                "is_trainable": False,
+                "local_files_only": True,
+            }
             self._model = PeftModel.from_pretrained(
                 base_model,
-                self.adapter_model_id,
+                adapter_source,
                 **adapter_kwargs,
             ).eval()
             self._torch = torch
