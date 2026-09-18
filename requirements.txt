@@ -10,4 +10,5 @@ pydantic>=2.11,<3
 Pillow>=11,<13
 PyMuPDF>=1.26,<2
 requests>=2.32,<3
+json-repair>=0.63,<1
 

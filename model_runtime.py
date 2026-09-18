@@ -83,7 +83,16 @@ def _local_adapter_source(
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """Parse one JSON object while tolerating an accidental Markdown fence."""
+    """Parse one JSON object while tolerating an accidental Markdown fence.
+
+    The base model occasionally drops a delimiter (most often a comma
+    between two adjacent array/string items) when asked to write terse,
+    list-like fields. Rather than failing the whole job on that one
+    delimiter, try a best-effort repair before giving up. If even the
+    repair cannot produce valid JSON, raise an error that includes a
+    snippet of the offending text so the failure is diagnosable directly
+    from the job's error message, without needing a separate debug flag.
+    """
 
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -98,10 +107,43 @@ def extract_json_object(text: str) -> dict[str, Any]:
     end = stripped.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("model output did not contain a JSON object")
-    value = json.loads(stripped[start : end + 1])
+    candidate = stripped[start : end + 1]
+
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        value = _try_repair_json(candidate)
+        if value is None:
+            snippet_start = max(0, exc.pos - 120)
+            snippet_end = min(len(candidate), exc.pos + 120)
+            snippet = candidate[snippet_start:snippet_end]
+            raise ValueError(
+                "model output was not valid JSON even after repair "
+                f"({exc.msg} at line {exc.lineno} col {exc.colno}); "
+                f"nearby text: {snippet!r}"
+            ) from exc
+
     if not isinstance(value, dict):
         raise ValueError("model output JSON must be an object")
     return value
+
+
+def _try_repair_json(candidate: str) -> dict[str, Any] | None:
+    """Best-effort recovery for near-valid JSON (missing/extra commas,
+    unescaped quotes, etc). Returns ``None`` if no valid object could be
+    recovered, so the caller can fall back to raising the original error.
+    """
+
+    try:
+        from json_repair import repair_json
+    except ImportError:  # pragma: no cover - defensive, dependency is pinned
+        return None
+    try:
+        repaired = repair_json(candidate)
+        value = json.loads(repaired)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 class QuotationModelRuntime:
