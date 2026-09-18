@@ -76,6 +76,11 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
     required_pipeline = str(payload.get("pipeline_version") or "").strip()
     if required_pipeline and required_pipeline != WORKER_VERSION:
         raise ValueError("unsupported pipeline_version")
+    # "extraction" (default) preserves the existing ERP-mapping contract.
+    # Other values (e.g. "spec_eval") skip the strict extraction-schema
+    # validation so the same base model can be reused for other structured
+    # JSON tasks driven purely by system_prompt/user_prompt.
+    task = str(payload.get("task") or "extraction").strip().lower()
 
     system_prompt, user_prompt, prompt_version, prompt_hash = prompt_values(payload)
     document_text = read_document_text(payload)
@@ -93,6 +98,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             user_prompt,
             _max_new_tokens(payload),
             _ocr_max_new_tokens(),
+            task=task,
         )
     finally:
         for image in images:
@@ -110,6 +116,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         "status": "success",
         "request_id": request_id,
         "worker_version": WORKER_VERSION,
+        "task": task,
         "prompt_version": prompt_version,
         "prompt_sha256": prompt_hash,
         "model": {
